@@ -8,9 +8,12 @@ export default defineConfig(({ mode }) => ({
     port: 8080,
     strictPort: true, // fail immediately if 8080 is taken — never silently bump to 8081
     hmr: { overlay: false },
+    // changeOrigin must stay false: the API builds the WebRTC/HLS camera URLs from the
+    // Host header it receives. Rewriting it to "localhost:3001" made every other PC
+    // look for the camera streams on itself.
     proxy: {
-      "/api": { target: "http://localhost:3001", changeOrigin: true },
-      "/ws": { target: "ws://localhost:3001", ws: true },
+      "/api": { target: "http://localhost:3001", changeOrigin: false },
+      "/ws": { target: "ws://localhost:3001", ws: true, changeOrigin: false },
     },
   },
 

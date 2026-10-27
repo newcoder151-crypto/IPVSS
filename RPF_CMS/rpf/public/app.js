@@ -8,6 +8,7 @@
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v == null || v === false) continue;
       if (k === 'class') el.className = v;
+      else if (k === 'style') el.style.cssText = v;   // CSSOM: allowed by the CSP (style="..." attributes and injected <style> tags are not)
       else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
       else if (v === true) el.setAttribute(k, '');
       else el.setAttribute(k, v);
@@ -126,7 +127,8 @@
   // ---------- toasts / dialogs -----------------------------------------------
   // Mild pop-up notifications (bottom right): alert, incident, footage request, request served, ok, error. Click opens the
   // item, hover keeps it, a soft chime plays (switch it off with the Sound button in the top bar).
-  const TOAST_KIND = { alert: ['!', 'Alert'], incident: ['#', 'Incident'], request: ['>', 'Footage request'], served: ['\u2713', 'Request served'], ok: ['\u2713', ''], err: ['!', ''], info: ['i', ''] };
+  // kind -> [icon, default title]
+  const TOAST_KIND = { alert: ['alert', 'Alert'], incident: ['folder', 'Incident'], request: ['upload', 'Footage request'], served: ['film', 'Footage delivered'], ok: ['check', ''], err: ['x', ''], info: ['bell', ''] };
   const soundOn = () => { try { return localStorage.getItem('rpf_sound') !== 'off'; } catch (_) { return true; } };
   let audioCtx = null; let lastChime = 0;
   function chime(kind) {
@@ -143,27 +145,8 @@
       });
     } catch (_) { /* browsers block sound until the first click - harmless */ }
   }
-  function toastStyle() {
-    if (document.getElementById('ntoast-style')) return;
-    document.head.append(h('style', { id: 'ntoast-style' }, `
-      .ntoasts{position:fixed;right:16px;bottom:16px;z-index:100000;display:flex;flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));pointer-events:none}
-      .ntoast{pointer-events:auto;display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:#1f2933;color:#f3f6f9;
-        box-shadow:0 6px 22px rgba(0,0,0,.28);border-left:4px solid #5b8def;font:13px/1.35 system-ui,sans-serif;opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s}
-      .ntoast.in{opacity:1;transform:none}.ntoast.click{cursor:pointer}
-      .ntoast .ni{flex:none;width:22px;height:22px;border-radius:50%;background:rgba(255,255,255,.14);display:grid;place-items:center;font-weight:700;font-size:12px}
-      .ntoast .nt{font-weight:600}.ntoast .nb{opacity:.82;margin-top:1px;word-break:break-word}
-      .ntoast .nx{margin-left:auto;background:none;border:0;color:inherit;opacity:.55;cursor:pointer;font-size:15px;line-height:1;padding:0 0 0 6px}
-      .ntoast.alert{border-color:#e5484d}.ntoast.incident{border-color:#f5a524}.ntoast.request{border-color:#5b8def}
-      .ntoast.served,.ntoast.ok{border-color:#30a46c}.ntoast.err{border-color:#e5484d}
-      .sound-btn{opacity:.85}
-      .tab .pill.ok,.pill.ok{background:#30a46c;color:#fff}.tab .pill.warn,.pill.warn{background:#f5a524;color:#1b1b1b}.tab .pill.info,.pill.info{background:#5b8def;color:#fff}.tab .pill.red,.pill.red{background:#e5484d;color:#fff}
-      .badge.new{background:#30a46c;color:#fff}
-      .subtabs{display:inline-flex;gap:4px;padding:4px;border-radius:12px;background:rgba(127,127,127,.14)}
-      .subtab{border:0;background:transparent;color:inherit;font:inherit;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;opacity:.75}
-      .subtab.on{background:#5b8def;color:#fff;opacity:1;box-shadow:0 1px 4px rgba(0,0,0,.25)}
-      .subtab .pill{display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;font-size:12px;line-height:19px;text-align:center;background:rgba(127,127,127,.35);color:inherit}
-      .subtab .pill.red{background:#e5484d;color:#fff}.subtab .pill.info{background:#5b8def;color:#fff}.subtab.on .pill{background:rgba(255,255,255,.28);color:#fff}.subtab .pill.zero{opacity:.55}`));
-  }
+  // All styles live in styles.css: the page's Content-Security-Policy (style-src 'self') blocks <style> tags added by script.
+  function toastStyle() { /* kept so older call sites keep working */ }
   /** Two-way tab bar with counters: tabs = [[id, text, count, colour]] */
   function subTabs(tabs, current, onPick) {
     toastStyle();
@@ -174,25 +157,29 @@
   /** toast(message, kind, { title, onClick }) - kind: alert | incident | request | served | ok | err | info (old callers pass 'alert' / 'err' / nothing) */
   function toast(msg, cls, opts) {
     toastStyle();
-    const kind = TOAST_KIND[cls] ? cls : 'info';
+    const kind = TOAST_KIND[cls] ? cls : 'ok';          // plain "Saved" / "Acknowledged" messages are confirmations
     const o = opts || {};
     let box = document.querySelector('.ntoasts');
     if (!box) { box = h('div', { class: 'ntoasts' }); document.body.append(box); }
     const text = String(msg);
     if ([...box.children].some((c) => c.dataset.msg === text)) return;            // the same notice twice in a row is shown once
     while (box.children.length >= 4) box.firstChild.remove();
-    const title = o.title || TOAST_KIND[kind][1];
-    const close = () => { t.classList.remove('in'); setTimeout(() => t.remove(), 250); };
-    const t = h('div', { class: `ntoast ${kind} ${o.onClick ? 'click' : ''}`, 'data-msg': text },
-      h('span', { class: 'ni' }, TOAST_KIND[kind][0]),
-      h('div', {}, title ? h('div', { class: 'nt' }, title) : null, h('div', { class: title ? 'nb' : 'nt' }, text)),
-      h('button', { class: 'nx', title: 'Dismiss', onclick: (e) => { e.stopPropagation(); close(); } }, '\u00d7'));
+    const title = o.title !== undefined ? o.title : TOAST_KIND[kind][1];
+    const dur = kind === 'err' ? 9000 : 7500;
+    const close = () => { t.classList.remove('in'); setTimeout(() => t.remove(), 300); };
+    const np = h('div', { class: 'np' });
+    const t = h('div', { class: `ntoast ${kind} ${o.onClick ? 'click' : ''}`, 'data-msg': text, style: `--dur:${dur}ms`, role: 'status' },
+      h('div', { class: 'ni' }, ic(TOAST_KIND[kind][0], 21)),
+      h('div', { class: 'nbox' },
+        h('div', { class: 'nt' }, title || text), title ? h('div', { class: 'nb' }, text) : null,
+        h('div', { class: 'nm' }, o.onClick ? h('b', {}, 'Click to open') : null, h('span', {}, new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })))),
+      h('button', { class: 'nx', title: 'Dismiss', onclick: (e) => { e.stopPropagation(); close(); } }, '\u00d7'), np);
     if (o.onClick) t.addEventListener('click', () => { close(); o.onClick(); });
     box.append(t);
     requestAnimationFrame(() => t.classList.add('in'));
-    let timer = setTimeout(close, kind === 'err' ? 9000 : 7000);
+    let timer = setTimeout(close, dur);
     t.addEventListener('mouseenter', () => clearTimeout(timer));
-    t.addEventListener('mouseleave', () => { timer = setTimeout(close, 3000); });
+    t.addEventListener('mouseleave', () => { np.style.animation = 'ntp 2.5s linear forwards'; timer = setTimeout(close, 2500); });
     if (kind !== 'ok' && kind !== 'info') chime(kind);
   }
 
@@ -429,6 +416,7 @@
   // counters on the tabs: [element id, colour, tooltip]
   const TAB_PILL = {
     alerts: ['unacked-pill', 'red', 'alerts waiting to be acknowledged'],
+    incidents: ['incidents-pill', 'info', 'open incidents'],
     requests: ['requests-pill', 'info', 'footage requests still open'],
     footage: ['footage-pill', 'ok', 'delivered footage nobody at this post has played yet'],
     flags: ['flags-pill', 'warn', 'new notices from CMS about flagged evidence'],
@@ -567,7 +555,7 @@
               h('div', { class: 'achips' }, a.ack_at ? badge(`acknowledged by ${a.ack_by_username || '-'}`, 'green') : badge('not acknowledged', open ? 'red' : 'grey'),
                 a.incident_status ? badge(`incident #${a.incident_id} ${label(a.incident_status)}`, INC_CLS[a.incident_status]) : h('span', { class: 'muted' }, 'no incident yet')))),
           mine ? h('div', { class: 'acard-act' },
-            !a.ack_at ? btnI('check', 'Acknowledge', { class: 'btn sm', onclick: async (e) => { e.stopPropagation(); try { await api(`/api/alerts/${a.delivery_id}/ack`, { method: 'POST', body: {} }); toast('Moved to Acknowledged alerts', 'ok', { title: 'Acknowledged', onClick: () => { S.alertState = 'acked'; refresh(); } }); refresh(); } catch (ex) { toast(ex.message); } } }) : null,
+            !a.ack_at ? btnI('check', 'Acknowledge', { class: 'btn sm', onclick: async (e) => { e.stopPropagation(); try { await api(`/api/alerts/${a.delivery_id}/ack`, { method: 'POST', body: {} }); toast('Moved to Acknowledged alerts', 'ok', { title: 'Acknowledged', onClick: () => { S.alertState = 'acked'; refresh(); } }); refresh(); } catch (ex) { toast(ex.message, 'err'); } } }) : null,
             !a.incident_id ? btnI('plus', 'Raise incident', { class: 'btn sm primary', onclick: (e) => { e.stopPropagation(); incidentForm({ alert: a }); } }) : btnI('folder', `Incident #${a.incident_id}`, { class: 'btn sm', onclick: (e) => { e.stopPropagation(); openIncident(a.incident_id); } }),
             btnI('film', 'Request footage', { class: 'btn sm accent', onclick: (e) => { e.stopPropagation(); requestForm({ alert: a }); } })) : null);
       };
@@ -748,7 +736,7 @@
       holder.replaceChildren(...nodes);
       info.textContent = '';
     }
-    dl.addEventListener('click', async () => { try { const link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'download', source } }); startDownload(link.url); toast(`Download started - the ${source === 'local' ? 'local' : 'CMS'} copy`); } catch (ex) { toast(ex.message); } });
+    dl.addEventListener('click', async () => { try { const link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'download', source } }); startDownload(link.url); toast(`Download started - the ${source === 'local' ? 'local' : 'CMS'} copy`); } catch (ex) { toast(ex.message, 'err'); } });
     const storageText = { cms: 'On CMS (kept beyond 30 days)', local: 'Locally at the post only', both: 'On CMS and locally at the post' }[f.storage] || f.storage;
     const node = h('div', { class: 'pad' },
       h('h3', {}, `Flag #${f.id} - ${f.camera_name} / ${f.nvr_name}`),
@@ -772,9 +760,9 @@
     const chips = h('div', { class: 'chips' }, NOTE_CHIPS.map((t) => h('button', { class: 'chip', type: 'button', onclick: () => { ta.value = `${ta.value ? ta.value.trimEnd() + ' ' : ''}${t}. `; ta.focus(); } }, t)));
     const save = btnI('check', button || 'Save action note', { class: 'btn primary', type: 'button' });
     save.addEventListener('click', async () => {
-      if (!ta.value.trim()) { toast('Write what was done first'); return; }
+      if (!ta.value.trim()) { toast('Write what was done first', 'info'); return; }
       save.disabled = true;
-      try { await onSave(ta.value.trim()); ta.value = ''; toast('Saved - CMS can see this'); } catch (ex) { toast(ex.message); } finally { save.disabled = false; }
+      try { await onSave(ta.value.trim()); ta.value = ''; toast('Saved - CMS can see this'); } catch (ex) { toast(ex.message, 'err'); } finally { save.disabled = false; }
     });
     return h('div', { class: 'composer' }, ta, chips, h('div', { class: 'actions' }, save));
   }
@@ -791,7 +779,7 @@
   }
 
   // ---------- drawer (alert / incident) ----------------------------------------
-  function closeDrawer() { S.drawer = null; document.getElementById('drawer-root')?.replaceChildren(); }
+  function closeDrawer() { S.drawer = null; document.body.classList.remove('drawer-open'); document.getElementById('drawer-root')?.replaceChildren(); }
   const reopen = async () => { if (!S.drawer) return; const d = S.drawer; if (d.kind === 'alert') await openAlert(d.id); else await openIncident(d.id); };
 
   const section = (title, ...kids) => h('section', {}, h('h3', {}, title), kids);
@@ -813,89 +801,179 @@
   }
   const actBtn = (text, fn, cls, after) => h('button', { class: `btn ${cls || ''}`, onclick: async (e) => {
     e.target.disabled = true;
-    try { await fn(); await (after || reopen)(); refresh(); } catch (ex) { toast(ex.message); e.target.disabled = false; }
+    try { await fn(); await (after || reopen)(); refresh(); } catch (ex) { toast(ex.message, 'err'); e.target.disabled = false; }
   } }, text);
+
+  // ---------- detail panels: a "command card" per alert / incident ----------------------------------------------
+  // header (what + how urgent + progress)  ->  tabs (Overview | Footage | Activity)  ->  sticky action bar.
+  const prioClass = (p) => (p >= 7 ? 'crit' : p >= 4 ? 'med' : 'low');
+  const prioText = (p) => (p >= 7 ? 'Critical' : p >= 4 ? 'Medium' : 'Low');
+  const fact = (icon, k, v, sub) => h('div', { class: 'fact' }, h('div', { class: 'fi' }, ic(icon, 17)), h('div', {}, h('div', { class: 'fk' }, k), h('div', { class: 'fv' }, v), sub ? h('div', { class: 'fs' }, sub) : null));
+  const pinLink = (a) => (a.lat != null && a.lon != null ? mapLink(a) : 'not recorded');
+  /** steps: [[label, doneAt|null|true, hint]]  -> a progress line; the first unfinished step is "now". */
+  function stepper(steps) {
+    let nowSet = false;
+    return h('div', { class: 'steps' }, steps.map(([text, at], i) => {
+      const done = !!at; const cls = done ? 'done' : (!nowSet ? (nowSet = true, 'now') : '');
+      return h('div', { class: `step ${cls}` }, h('i', {}, done ? ic('check', 13) : String(i + 1)), h('b', {}, text), h('em', {}, at && at !== true ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : cls === 'now' ? 'next' : ''));
+    }));
+  }
+  function drawerShell({ tone, icon, title, sub, ring, chips, steps, tabs, actions }) {
+    const want = S.drawerTab && tabs.some((t) => t.id === S.drawerTab) ? S.drawerTab : tabs[0].id;
+    const panel = h('div', { class: 'dbody' });
+    const bar = h('div', { class: 'dtabs', role: 'tablist' });
+    const show = (id) => {
+      S.drawerTab = id;
+      [...bar.children].forEach((b) => b.classList.toggle('on', b.dataset.id === id));
+      panel.replaceChildren(h('div', {}, tabs.find((t) => t.id === id).body()));
+      panel.scrollTop = 0;
+    };
+    tabs.forEach((t) => bar.append(h('button', { class: `dtab ${t.id === want ? 'on' : ''}`, 'data-id': t.id, role: 'tab', onclick: () => show(t.id) }, t.label, t.count != null ? h('span', { class: 'c' }, String(t.count)) : null)));
+    panel.append(h('div', {}, tabs.find((t) => t.id === want).body()));
+    document.body.classList.add('drawer-open');
+    return h('aside', { class: 'drawer v2' },
+      h('header', { class: `dh ${tone}` },
+        h('div', { class: 'dh-top' },
+          ring ? h('div', { class: 'ring', style: `--p:${ring.pct}%` }, h('div', {}, h('b', {}, ring.text), h('small', {}, ring.caption))) : null,
+          h('div', { class: 'dh-ico' }, icon),
+          h('div', { class: 'dh-title' }, h('h2', {}, title), h('div', { class: 'dh-sub' }, sub)),
+          h('div', { class: 'dh-btns' }, h('button', { class: 'btn sm', title: 'Reload', onclick: reopen }, ic('clock', 14)), h('button', { class: 'btn sm', title: 'Close', onclick: closeDrawer }, ic('x', 14)))),
+        h('div', { class: 'dh-chips' }, chips), stepper(steps)),
+      bar, panel,
+      actions.length ? h('footer', { class: 'dfoot' }, actions) : null);
+  }
+  const subItem = (icon, text) => h('span', {}, ic(icon, 13), text);
+  const emptyHint = (icon, text, more) => h('div', { class: 'empty2' }, ic(icon, 34), h('div', {}, text), more ? h('div', { class: 'muted' }, more) : null);
+  /** Footage requests as cards (status, window, what CMS said, Play / Save buttons) */
+  function requestCards(requests, footage, canFlag) {
+    if (!requests.length) return emptyHint('film', 'No footage requested yet.', 'Use "Request footage" below to ask CMS for the train\'s recording.');
+    return requests.map((r) => h('div', { class: 'rq' },
+      h('div', { class: 'rq-top' }, h('b', {}, `#${r.id} - ${r.camera_name || 'camera'}`), reqBadge(r.status)),
+      h('div', { class: 'rq-when' }, ic('clock', 12), ` ${fmtTime(r.window_start)} to ${fmtTime(r.window_end)}`),
+      r.status === 'awaiting_upload' ? h('div', { class: 'rq-when' }, "CMS is waiting for the train's NVR to upload this footage.") : null,
+      r.decision_note ? h('div', { class: 'rq-when' }, `CMS: ${r.decision_note}`) : null,
+      r.failure_reason ? h('div', { class: 'rq-when' }, r.failure_reason) : null,
+      footage.filter((f) => f.request_id === r.id).map((f) => footageButtons(f, canFlag))));
+  }
+  /** vertical activity feed: [{ title, body, who, at, tone }] */
+  function activityFeed(items) {
+    if (!items.length) return emptyHint('clock', 'No activity yet.');
+    return h('div', { class: 'feed' }, items.map((x) => h('div', { class: `fe ${x.tone || ''}` }, h('b', {}, x.title), x.body ? h('div', { class: 'fb' }, x.body) : null, h('div', { class: 'fw' }, `${fmtTime(x.at)} - ${x.who || 'system'}`))));
+  }
 
   async function openAlert(deliveryId) {
     let data;
-    try { data = await api(`/api/alerts/${deliveryId}`); } catch (ex) { toast(ex.message); return; }
+    try { data = await api(`/api/alerts/${deliveryId}`); } catch (ex) { toast(ex.message, 'err'); return; }
+    S.drawerTab = S.drawer && S.drawer.kind === 'alert' && S.drawer.id === deliveryId ? S.drawerTab : 'overview';
     S.drawer = { kind: 'alert', id: deliveryId };
     const { alert: a, requests, footage, history } = data;
-    const officerActs = a.post_id === myPost();
+    const mine = a.post_id === myPost();
+    const handled = ['resolved', 'dismissed'].includes(a.alert_status) || a.incident_status === 'closed';
+    const needsAck = !a.ack_at && ['routed', 'escalated'].includes(a.alert_status);
 
     const actions = [];
-    if (officerActs) {
+    if (mine) {
       if (!a.ack_at) actions.push(actBtn('Acknowledge', async () => { await api(`/api/alerts/${deliveryId}/ack`, { method: 'POST', body: {} }); toast('Moved to Acknowledged alerts', 'ok', { title: 'Acknowledged', onClick: () => { S.alertState = 'acked'; go('alerts'); } }); }, 'primary'));
       if (!a.incident_id) actions.push(h('button', { class: 'btn primary', onclick: () => incidentForm({ alert: a }) }, 'Raise incident'));
-      if (a.incident_id) actions.push(h('button', { class: 'btn primary', onclick: () => openIncident(a.incident_id) }, `Open incident #${a.incident_id}`));
+      else actions.push(h('button', { class: 'btn primary', onclick: () => openIncident(a.incident_id) }, `Open incident #${a.incident_id}`));
       actions.push(h('button', { class: 'btn', onclick: () => requestForm({ alert: a }) }, 'Request footage'));
     } else if (a.incident_id) actions.push(h('button', { class: 'btn', onclick: () => openIncident(a.incident_id) }, `Open incident #${a.incident_id}`));
 
-    const drawer = h('aside', { class: 'drawer' },
-      h('header', {}, h('h2', {}, `${label(a.alert_type)} - P${a.priority}`),
-        h('button', { class: 'btn sm', title: 'Reload', onclick: reopen }, 'Refresh'),
-        h('button', { class: 'btn sm', onclick: closeDrawer }, 'Close')),
-      section('Alert', h('dl', { class: 'kv' },
-        h('dt', {}, 'Event time'), h('dd', {}, fmtTime(a.alert_event_time)),
-        h('dt', {}, 'Delivered to post'), h('dd', {}, `${a.post_name} at ${fmtTime(a.sent_at)}`, MODE_TAG(a) ? h('div', {}, MODE_TAG(a)) : null),
-        h('dt', {}, 'Camera / NVR'), h('dd', {}, `${a.camera_name || 'camera n/a'} / ${a.nvr_name}`, a.train_no ? ` (${a.train_no})` : ''),
-        h('dt', {}, 'Location'), h('dd', {}, mapLink(a), a.fix_quality ? h('span', { class: 'muted' }, ` (fix: ${a.fix_quality}${a.fix_age_s != null ? `, ${a.fix_age_s}s old` : ''})`) : null),
-        h('dt', {}, 'Acknowledged'), h('dd', {}, a.ack_at ? `${fmtTime(a.ack_at)} by ${a.ack_by_username}` : badge('not yet', 'red')),
-        h('dt', {}, 'Incident'), h('dd', {}, a.incident_status ? [badge(a.incident_status, INC_CLS[a.incident_status]), ` #${a.incident_id}`] : 'none raised'),
-        h('dt', {}, 'Alert status'), h('dd', {}, label(a.alert_status)))),
-      actions.length ? section('Actions', h('div', { class: 'actions' }, actions)) : null,
-      section(`Footage requests (${requests.length})`, requestList(requests, footage, officerActs)),
-      officerActs && !['resolved', 'dismissed'].includes(a.alert_status) ? section('Record what was done',
+    const overview = () => h('div', {},
+      handled ? h('div', { class: 'banner' }, h('div', { class: 'bi' }, ic('check', 22)), h('div', {}, h('b', {}, 'This alert is handled'), h('div', { class: 'muted' }, a.incident_status === 'closed' ? `Its incident #${a.incident_id} is closed.` : label(a.alert_status)))) : null,
+      needsAck && mine ? h('div', { class: 'banner red' }, h('div', { class: 'bi' }, ic('bell', 22)), h('div', {}, h('b', {}, 'Nobody has acknowledged this alert yet'), h('div', { class: 'muted' }, 'Press Acknowledge once someone is on it, or raise an incident to start the paperwork.'))) : null,
+      h('div', { class: `facts ${handled || (needsAck && mine) ? 'gap' : ''}` },
+        fact('clock', 'Happened', fmtTime(a.alert_event_time), ago(a.alert_event_time)),
+        fact('camera', 'Camera', a.camera_name || 'not known', a.nvr_name),
+        fact('train', 'Train', a.train_no || 'not known'),
+        fact('pin', 'Location', pinLink(a), a.fix_quality ? `GPS ${a.fix_quality}${a.fix_age_s != null ? `, ${a.fix_age_s}s old` : ''}` : null),
+        fact('shield', 'Sent to', a.post_name, `${fmtTime(a.sent_at)}${MODE_TAG(a) ? '' : ''}`),
+        fact('user', 'Acknowledged', a.ack_at ? `by ${a.ack_by_username}` : 'not yet', a.ack_at ? fmtTime(a.ack_at) : null)),
+      MODE_TAG(a) ? h('div', { class: 'card2' }, MODE_TAG(a)) : null,
+      mine && !['resolved', 'dismissed'].includes(a.alert_status) ? h('div', { class: 'card2' }, h('h4', {}, 'Record what was done'),
         noteComposer((text) => api(`/api/alerts/${deliveryId}/notes`, { method: 'POST', body: { text } }).then(reopen)),
         !a.incident_id ? h('div', { class: 'actions mt' }, btnI('check', 'Mark alert resolved...', { class: 'btn', onclick: () => formDialog({
           title: 'Resolve this alert', sub: 'Use this when no incident is needed. Say what was done; the alert is acknowledged and closed.',
           fields: [{ name: 'note', label: 'What was done (required)', type: 'textarea' }], submitLabel: 'Resolve alert',
           submit: async (v) => { if (!v.note.trim()) throw new Error('write what was done'); await api(`/api/alerts/${deliveryId}/resolve`, { method: 'POST', body: { note: v.note } }); toast('Alert resolved'); await reopen(); refresh(); },
-        }) })) : h('div', { class: 'muted mt' }, 'This alert has an incident - record actions and close it from the incident.')) : null,
-      section('History', history.length ? history.map((x) => h('div', { class: `item ${(x.note || '').startsWith('Action note:') ? 'note-item' : ''}` }, x.from_status === x.to_status ? h('b', {}, 'Action note') : `${label(x.from_status)} -> ${label(x.to_status)}`,
-        x.note ? h('div', {}, String(x.note).replace(/^Action note:\s*/, '')) : null, h('div', { class: 'muted' }, `${fmtTime(x.changed_at)} - ${x.changed_by_username || 'system'}`))) : h('div', { class: 'muted' }, 'No status changes recorded.')));
-    document.getElementById('drawer-root').replaceChildren(drawer);
+        }) })) : h('div', { class: 'muted mt' }, 'This alert has an incident - record actions and close it from the incident.')) : null);
+
+    const feed = history.map((x) => {
+      const note = (x.note || '').startsWith('Action note:');
+      return { title: x.from_status === x.to_status || note ? 'Action note' : `${label(x.from_status)} \u2192 ${label(x.to_status)}`, body: x.note ? String(x.note).replace(/^Action note:\s*/, '') : null, who: x.changed_by_username, at: x.changed_at, tone: note ? 'note' : x.to_status === 'escalated' ? 'warn' : '' };
+    });
+    feed.unshift({ title: 'Alert reached this post', body: a.mode === 'operator' ? 'Forwarded by a CMS operator' : a.mode === 'escalation' ? 'Escalated to this post' : 'Routed automatically by CMS (nearest post)', who: 'CMS', at: a.sent_at });
+    const steps = [['Received', a.sent_at], ['Acknowledged', a.ack_at], ['Incident', a.incident_id ? (a.incident_created_at || true) : null],
+      ['Footage', footage.length ? true : null], ['Closed', handled ? true : null]];
+    return void document.getElementById('drawer-root').replaceChildren(drawerShell({
+      tone: handled ? 'done' : prioClass(a.priority), icon: typeIcon(a.alert_type), title: label(a.alert_type).replace(/\b\w/g, (c) => c.toUpperCase()),
+      sub: [a.camera_name ? subItem('camera', `${a.camera_name} / ${a.nvr_name}`) : null, a.train_no ? subItem('train', a.train_no) : null, subItem('clock', ago(a.alert_event_time))],
+      ring: { pct: Math.min(100, Number(a.priority) * 10), text: `P${a.priority}`, caption: prioText(a.priority) },
+      chips: [needsAck ? h('span', { class: 'badge red pulse' }, 'needs acknowledging') : a.ack_at ? badge('acknowledged', 'green') : null,
+        a.incident_status ? badge(`incident #${a.incident_id} ${label(a.incident_status)}`, INC_CLS[a.incident_status]) : badge('no incident yet', 'grey'),
+        requests.length ? badge(`${requests.length} footage request${requests.length === 1 ? '' : 's'}`, 'blue') : null],
+      steps,
+      tabs: [{ id: 'overview', label: 'Overview', body: overview }, { id: 'footage', label: 'Footage', count: requests.length, body: () => requestCards(requests, footage, mine) },
+        { id: 'activity', label: 'Activity', count: feed.length, body: () => activityFeed(feed) }],
+      actions }));
   }
 
   async function openIncident(id) {
     let data;
-    try { data = await api(`/api/incidents/${id}`); } catch (ex) { toast(ex.message); return; }
+    try { data = await api(`/api/incidents/${id}`); } catch (ex) { toast(ex.message, 'err'); return; }
+    S.drawerTab = S.drawer && S.drawer.kind === 'incident' && S.drawer.id === id ? S.drawerTab : 'overview';
     S.drawer = { kind: 'incident', id };
     const { incident: i, requests, footage, flags, timeline } = data;
     const mine = i.post_id === myPost();
+    const closed = i.status === 'closed';
     const actions = [];
-    if (mine && i.status !== 'closed') {
+    if (mine && !closed) {
       actions.push(h('button', { class: 'btn primary', onclick: () => requestForm({ incident: i }) }, 'Request footage'));
       if (i.status === 'open') actions.push(actBtn('Mark under review', () => api(`/api/incidents/${id}/status`, { method: 'PATCH', body: { status: 'under_review' } })));
+      actions.push(h('span', { class: 'spacer' }));
       actions.push(h('button', { class: 'btn', onclick: () => formDialog({
         title: 'Close incident', sub: 'Closing resolves the alert. This cannot be reopened from the dashboard (CMS can reopen it).',
         fields: [{ name: 'note', label: 'Action taken / outcome (required)', type: 'textarea' }], submitLabel: 'Close incident',
-        submit: async (v) => { if (!v.note.trim()) throw new Error('write the action taken / outcome before closing'); await api(`/api/incidents/${id}/status`, { method: 'PATCH', body: { status: 'closed', note: v.note } }); toast(`Incident #${id} moved to Closed incidents`, 'ok', { title: 'Incident closed', onClick: () => { S.incState = 'closed'; go('incidents'); } }); await reopen(); refresh(); },
+        submit: async (v) => { if (!v.note.trim()) throw new Error('write the action taken / outcome before closing'); await api(`/api/incidents/${id}/status`, { method: 'PATCH', body: { status: 'closed', note: v.note } }); toast(`Incident #${id} moved to Closed incidents`, 'ok', { title: 'Incident closed', onClick: () => { S.incState = 'closed'; go('incidents'); } }); await reopen(); poll(); refresh(); },
       }) }, 'Close incident'));
     }
-    const drawer = h('aside', { class: 'drawer' },
-      h('header', {}, h('h2', {}, `Incident #${i.id}`), h('button', { class: 'btn sm', onclick: reopen }, 'Refresh'), h('button', { class: 'btn sm', onclick: closeDrawer }, 'Close')),
-      section('Incident', h('dl', { class: 'kv' },
-        h('dt', {}, 'Title'), h('dd', {}, h('b', {}, i.title || label(i.alert_type))),
-        h('dt', {}, 'Status'), h('dd', {}, badge(i.status, INC_CLS[i.status])),
-        h('dt', {}, 'Source'), h('dd', {}, SRC_TEXT[i.source] || i.source, i.alert_delivery_id ? h('span', { class: 'muted' }, ' - ') : null,
-          i.alert_delivery_id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openAlert(i.alert_delivery_id); } }, 'view alert') : null),
-        h('dt', {}, 'Category / priority'), h('dd', {}, `${label(i.alert_type)} - P${i.priority ?? '?'}`),
-        h('dt', {}, 'Occurred'), h('dd', {}, fmtTime(i.occurred_at)),
-        h('dt', {}, 'Raised'), h('dd', {}, `${fmtTime(i.created_at)} by ${i.raised_by_username}`),
-        h('dt', {}, 'Camera / train'), h('dd', {}, i.camera_name ? `${i.camera_name} / ${i.nvr_name}${i.train_no ? ` (${i.train_no})` : ''}` : 'not set'),
-        h('dt', {}, 'Location'), h('dd', {}, mapLink(i)),
-        i.description ? [h('dt', {}, 'Description'), h('dd', {}, i.description)] : null,
-        i.closed_at ? [h('dt', {}, 'Closed'), h('dd', {}, `${fmtTime(i.closed_at)} by ${i.closed_by_username || '-'}${i.closing_note ? ` - ${i.closing_note}` : ''}`)] : null)),
-      actions.length ? section('Actions', h('div', { class: 'actions' }, actions)) : null,
-      section(`Footage requests (${requests.length})`, requestList(requests, footage, mine)),
-      flags.length ? section(`Evidence flags (${flags.length})`, flags.map((f) => h('div', { class: 'item' },
+    if (i.alert_delivery_id) actions.push(h('button', { class: 'btn', onclick: () => openAlert(i.alert_delivery_id) }, 'View alert'));
+
+    const overview = () => h('div', {},
+      closed ? h('div', { class: 'banner' }, h('div', { class: 'bi' }, ic('check', 22)), h('div', {}, h('b', {}, `Closed ${fmtTime(i.closed_at)}${i.closed_by_username ? ` by ${i.closed_by_username}` : ''}`), i.closing_note ? h('div', {}, i.closing_note) : null))
+        : i.status === 'under_review' ? h('div', { class: 'banner amber' }, h('div', { class: 'bi' }, ic('eye', 22)), h('div', {}, h('b', {}, 'Under review'), h('div', { class: 'muted' }, 'Record what was done, then close the incident with the outcome.'))) : null,
+      h('div', { class: `facts ${closed || i.status === 'under_review' ? 'gap' : ''}` },
+        fact('clock', 'Occurred', fmtTime(i.occurred_at), ago(i.occurred_at)),
+        fact('user', 'Raised by', i.raised_by_username, `${fmtTime(i.created_at)} - ${SRC_TEXT[i.source] || i.source}`),
+        fact('camera', 'Camera', i.camera_name || 'not set', i.nvr_name),
+        fact('train', 'Train', i.train_no || 'not set'),
+        fact('pin', 'Location', pinLink(i)),
+        fact('flag', 'Evidence', flags.length ? `${flags.length} flagged` : 'none flagged', flags.length ? `${flags.filter((f) => f.retention === 'permanent').length} kept for life` : null)),
+      i.description ? h('div', { class: 'card2' }, h('h4', {}, 'What is known'), h('div', {}, i.description)) : null,
+      mine && !closed ? h('div', { class: 'card2' }, h('h4', {}, 'Record what was done'), noteComposer((text) => api(`/api/incidents/${id}/notes`, { method: 'POST', body: { text } }).then(reopen), { button: 'Save action note' })) : null);
+
+    const footageTab = () => h('div', {}, requestCards(requests, footage, mine),
+      flags.length ? h('div', { class: 'card2' }, h('h4', {}, `Evidence flags (${flags.length})`), flags.map((f) => h('div', { class: 'item' },
         f.retention === 'permanent' ? badge('for life', 'indigo') : badge('timed', 'blue'), ' ', badge(ARCH_TEXT[f.archive_status] || f.archive_status, ARCH_CLS[f.archive_status]),
         h('div', {}, `flag #${f.id} - footage #${f.footage_id}${f.section_start_s != null ? ` - ${fmtDur(f.section_start_s)} to ${fmtDur(f.section_end_s)}` : ' - whole file'}`),
-        h('div', { class: 'muted' }, f.justification)))) : null,
-      mine && i.status !== 'closed' ? section('Record what was done', noteComposer((text) => api(`/api/incidents/${id}/notes`, { method: 'POST', body: { text } }).then(reopen), { button: 'Save action note' })) : null,
-      section(`Timeline (${timeline.length})`, timeline.length ? timeline.map(timelineItem) : h('div', { class: 'muted' }, 'No activity yet.')));
-    document.getElementById('drawer-root').replaceChildren(drawer);
+        h('div', { class: 'muted' }, f.justification)))) : null);
+
+    const feed = timeline.map((x) => {
+      const d = x.details || {};
+      const [title, body] = (TL_TEXT[x.action] || (() => [label(x.action.replace(/^(incident|alert)\./, '')), d.note || d.text]))(d);
+      const note = x.action === 'incident.note' || (d.note || '').startsWith('Action note:');
+      return { title: note ? 'Action note' : title, body: body ? String(body).replace(/^Action note:\s*/, '') : null, who: x.actor, at: x.occurred_at, tone: note ? 'note' : /escalat/.test(x.action) ? 'warn' : '' };
+    });
+    const steps = [['Raised', i.created_at], ['Under review', i.status === 'under_review' || closed ? true : null], ['Footage', footage.length ? true : null], ['Closed', closed ? i.closed_at : null]];
+    return void document.getElementById('drawer-root').replaceChildren(drawerShell({
+      tone: closed ? 'done' : i.status === 'under_review' ? 'med' : prioClass(i.priority || 5), icon: ic('folder', 26), title: i.title || label(i.alert_type),
+      sub: [subItem('folder', `Incident #${i.id}`), i.camera_name ? subItem('camera', `${i.camera_name} / ${i.nvr_name}`) : null, i.train_no ? subItem('train', i.train_no) : null, subItem('clock', ago(i.occurred_at))],
+      ring: i.priority != null ? { pct: Math.min(100, Number(i.priority) * 10), text: `P${i.priority}`, caption: prioText(i.priority) } : null,
+      chips: [badge(i.status, INC_CLS[i.status]), badge(label(i.alert_type), 'grey'), requests.length ? badge(`${requests.length} footage request${requests.length === 1 ? '' : 's'}`, 'blue') : null],
+      steps,
+      tabs: [{ id: 'overview', label: 'Overview', body: overview }, { id: 'footage', label: 'Footage & evidence', count: requests.length + flags.length, body: footageTab },
+        { id: 'activity', label: 'Activity', count: feed.length, body: () => activityFeed(feed) }],
+      actions }));
   }
 
   // ---------- forms -----------------------------------------------------------
@@ -930,8 +1008,8 @@
             occurred_at: new Date(v.occurred_at).toISOString(), priority: Number(v.priority), description: v.description } });
         }
         S.quietUntil = Date.now() + 6000;
-        toast(`Incident #${created.id} raised`, 'incident', { onClick: () => openIncident(created.id) });
-        refresh();
+        toast(v.title && v.title.trim() ? v.title.trim() : (alert ? label(alert.alert_type) : 'New incident'), 'incident', { title: `Incident #${created.id} raised`, onClick: () => openIncident(created.id) });
+        poll(); refresh();
         await openIncident(created.id);
       },
     });
@@ -970,7 +1048,7 @@
 
   async function cancelRequest(id) {
     if (!window.confirm(`Cancel footage request #${id}?`)) return;
-    try { await api(`/api/requests/${id}/cancel`, { method: 'POST' }); toast(`Request #${id} cancelled`); await reopen(); refresh(); } catch (ex) { toast(ex.message); }
+    try { await api(`/api/requests/${id}/cancel`, { method: 'POST' }); toast(`Request #${id} cancelled`); await reopen(); refresh(); } catch (ex) { toast(ex.message, 'err'); }
   }
 
   async function openRequestFootage(requestId) {
@@ -978,7 +1056,7 @@
       const { footage } = await api(`/api/requests/${requestId}`);
       if (!footage.length) { toast('No footage has been delivered for this request yet'); return; }
       reviewFootage(footage[0]);
-    } catch (ex) { toast(ex.message); }
+    } catch (ex) { toast(ex.message, 'err'); }
   }
 
   const startDownload = (url) => { const a = h('a', { href: url, download: '' }); document.body.append(a); a.click(); a.remove(); };
@@ -988,7 +1066,7 @@
       const link = await api(`/api/footage/${f.id}/access`, { method: 'POST', body: { purpose: 'download', ...(section ? { start_s: section.start, end_s: section.end } : {}) } });
       startDownload(link.url);
       toast(section ? `Downloading ${fmtDur(section.end - section.start)} section (original quality, not re-encoded)` : 'Download started - the original file, unmodified');
-    } catch (ex) { toast(ex.message); }
+    } catch (ex) { toast(ex.message, 'err'); }
   }
 
   /** Dialog with a player. `src` is a fetched link; `after` renders extra controls. */
@@ -1007,14 +1085,14 @@
 
   async function playFlag(f) {
     let link;
-    try { link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'view' } }); } catch (ex) { toast(ex.message); return; }
+    try { link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'view' } }); } catch (ex) { toast(ex.message, 'err'); return; }
     const { nodes } = playerBody(link, `Evidence flag #${f.id} - archived clip - ${f.camera_name} / ${f.nvr_name} - viewing is logged`);
     const foot = h('div', { class: 'foot' });
     const { close } = dialog({ title: `Evidence clip #${f.id}`, wide: true, body: [nodes, foot], onClose: () => document.querySelector('dialog video')?.pause() });
     foot.append(h('button', { class: 'btn', onclick: () => downloadFlag(f) }, 'Save to PC'), h('button', { class: 'btn', onclick: close }, 'Close'));
   }
   async function downloadFlag(f) {
-    try { const link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'download' } }); startDownload(link.url); toast('Download started - the archived evidence clip'); } catch (ex) { toast(ex.message); }
+    try { const link = await api(`/api/flags/${f.id}/access`, { method: 'POST', body: { purpose: 'download' } }); startDownload(link.url); toast('Download started - the archived evidence clip'); } catch (ex) { toast(ex.message, 'err'); }
   }
 
   /**
@@ -1024,7 +1102,7 @@
   async function buildReviewer(f, opts = {}) {
     const closeCb = opts.onFlagged || (() => {});
     let link;
-    try { link = await api(`/api/footage/${f.id}/access`, { method: 'POST', body: { purpose: 'view' } }); } catch (ex) { toast(ex.message); return null; }
+    try { link = await api(`/api/footage/${f.id}/access`, { method: 'POST', body: { purpose: 'view' } }); } catch (ex) { toast(ex.message, 'err'); return null; }
     const canFlag = f.post_id === myPost();
     const baseMs = new Date(f.start_time || f.window_start).getTime();
     const { video, nodes } = playerBody(link, `${f.camera_name} / ${f.nvr_name} - ${fmtTime(f.start_time || f.window_start)}${f.duration_s ? ` - ${fmtDur(f.duration_s)} long` : ''} - viewing is logged`);
@@ -1141,20 +1219,26 @@
     else if (n.ref_entity === 'evidence_flag') to('flags');
   }
   const BAD_NOTICE = /reject|fail|expire|cancel|dismiss/i;
+  const noticeKind = (n) => (BAD_NOTICE.test(n.title || '') && n.kind !== 'alert' ? 'err' : n.kind === 'footage' ? 'served' : n.kind === 'alert' ? 'alert' : n.kind === 'incident' ? 'incident' : n.kind === 'evidence' ? 'ok' : 'request');
   function noticeToast(n) {
-    const bad = BAD_NOTICE.test(n.title || '');
-    const kind = n.kind === 'footage' ? 'served' : n.kind === 'alert' ? 'alert' : n.kind === 'incident' ? 'incident' : bad ? 'err' : n.kind === 'evidence' ? 'ok' : 'request';
-    const title = n.kind === 'footage' ? 'Footage delivered' : n.kind === 'evidence' ? 'Evidence' : n.kind === 'request' ? 'Footage request' : undefined;
-    toast(n.kind === 'footage' || !title ? (n.title + (n.body ? ` - ${n.body}` : '')) : n.title + (n.body ? ` - ${n.body}` : ''), kind, { title, onClick: () => openNotice(n) });
+    const kind = noticeKind(n);
+    const generic = { footage: 'Footage delivered', evidence: 'Evidence', request: 'Footage request', incident: 'Incident', alert: 'Alert' }[n.kind];
+    if (n.body) toast(n.body, kind, { title: n.title, onClick: () => openNotice(n) });
+    else toast(n.title, kind, { title: generic, onClick: () => openNotice(n) });
   }
+  document.addEventListener('click', (e) => { const box = document.getElementById('notif-box'); if (box && !box.classList.contains('hidden') && !e.target.closest('#notif-box') && !e.target.closest('#bell')) box.classList.add('hidden'); });
   async function toggleNotifications() {
     const box = document.getElementById('notif-box');
     if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
     let rows;
-    try { rows = await api('/api/notifications'); } catch (ex) { toast(ex.message); return; }
+    try { rows = await api('/api/notifications'); } catch (ex) { toast(ex.message, 'err'); return; }
     const head2 = h('div', { class: 'notif-head' }, h('b', {}, 'Notices'), h('span', { class: 'spacer' }),
       rows.some((n) => !n.read_at) ? h('button', { class: 'btn sm', onclick: async () => { await api('/api/notifications/read', { method: 'POST', body: {} }); box.classList.add('hidden'); poll(); } }, 'Mark all read') : null);
-    const items = rows.length ? rows.map((n) => h('div', { class: `notif-item ${n.read_at ? '' : 'unread'}`, onclick: () => { box.classList.add('hidden'); openNotice(n); } }, h('div', { class: 'nt' }, n.title), n.body ? h('div', { class: 'muted' }, n.body) : null, h('div', { class: 'muted' }, ago(n.created_at)))) : [h('div', { class: 'empty' }, 'No notices yet.')];
+    toastStyle();
+    const items = rows.length ? rows.map((n) => { const k = noticeKind(n); return h('div', { class: `notif-item ${n.read_at ? '' : 'unread'}`, onclick: () => { box.classList.add('hidden'); openNotice(n); } },
+      h('div', { class: `nic ${k}` }, ic(TOAST_KIND[k][0], 17)),
+      h('div', { class: 'nbody' }, h('div', { class: 'nt' }, n.title), n.body ? h('div', { class: 'nb' }, n.body) : null, h('div', { class: 'nw' }, agoEl(n.created_at)))); })
+      : [h('div', { class: 'notif-empty' }, ic('bell', 30), h('div', {}, 'No notices yet.'))];
     box.replaceChildren(head2, ...items);   // spread: an array here would be printed as text ("[object HTMLDivElement]")
     box.classList.remove('hidden');
   }
@@ -1163,7 +1247,7 @@
   async function poll(force) {
     let s;
     try { s = await api('/api/alerts/summary'); } catch (_) { return; }
-    setPill('unacked-pill', s.unacked); setPill('requests-pill', s.open_requests); setPill('footage-pill', s.unseen_footage); setPill('flags-pill', s.unread_evidence);
+    setPill('unacked-pill', s.unacked); setPill('incidents-pill', s.open_incidents); setPill('requests-pill', s.open_requests); setPill('footage-pill', s.unseen_footage); setPill('flags-pill', s.unread_evidence);
     const bell = document.getElementById('bell-pill');
     if (bell) { bell.textContent = s.unread_notifications; bell.classList.toggle('hidden', !Number(s.unread_notifications)); }
     document.title = s.unacked ? `(${s.unacked}) RPF Dashboard` : 'RPF Dashboard';
@@ -1210,7 +1294,7 @@
       if (W) {
         for (const i of incs) {
           const was = W.inc.get(i.id);
-          if (was === undefined) { if (!quiet && i.source !== 'auto') toast(`#${i.id} ${i.title || label(i.alert_type)}${i.priority != null ? ` - P${i.priority}` : ''}`, 'incident', { title: 'Incident raised', onClick: () => openIncident(i.id) }); }
+          if (was === undefined) { if (!quiet && i.source !== 'auto') toast(`${i.title || label(i.alert_type)}${i.priority != null ? ` - P${i.priority}` : ''}`, 'incident', { title: `Incident #${i.id} raised`, onClick: () => openIncident(i.id) }); }
         }
         for (const r of reqs) {
           const was = W.req.get(r.id); const cam = r.camera_name ? ` - ${r.camera_name}` : '';

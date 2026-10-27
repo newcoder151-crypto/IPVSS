@@ -102,3 +102,22 @@ Checked in the code and with the test-suite against a real database (12/12 pass;
 - Incidents has two tabs with counters: Open incidents (open + under review) and Closed incidents. Closing an incident moves it to Closed
   incidents (pop-up with a link). New API counters: alerts/summary -> acked, open_incidents, closed_incidents.
 - Tested through the API and by clicking the real buttons in the page (test/ui_notices.test.js): 20/20 tests pass.
+
+---
+# RPF: notices, Incidents counter, and the alert / incident detail panels
+
+- ROOT CAUSE of "notifications are just plain text": the dashboard is served with `style-src 'self'`, so the browser ignored the
+  styles that app.js injected (<style> tag, style="" attributes). All styles now live in public/styles.css; app.js sets dynamic values
+  through the CSSOM (allowed). test/csp_styles.test.js guards this. Checked with screenshots in a real Chromium (light + dark).
+- Pop-ups: cards with a coloured icon, title, text, time, "click to open" and a timer bar; they sit left of an open detail panel.
+  Bell panel: icon per notice type, unread dot, relative time, "Mark all read" visible, closes on outside click.
+- Incidents tab has its own counter (open incidents); raising one shows "Incident #n raised" with its title. Raising an incident from
+  an alert acknowledges the alert, so it leaves Unacknowledged and appears under Acknowledged (server already did this; now tested).
+- Alert / incident detail panel redesigned: header with priority ring, status chips and a progress line (Received - Acknowledged -
+  Incident - Footage - Closed), tabs Overview | Footage | Activity (the log is now only the Activity tab), fact cards, banners
+  ("nobody has acknowledged this alert"), requests as cards, and a sticky action bar.
+- Live pop-ups need `live.start()` (done by the normal server start-up); a page without the live stream refreshes every 20 s.
+
+- Fix: the Footage tab of the new detail panels printed "[object HTMLDivElement],[object HTMLDivElement]" (a list of cards was handed to
+  the browser as text). Tab bodies are now always mounted through h(), which flattens lists. Footage cards with Review / flag and
+  Save to PC work again; test/ui_notices.test.js now opens a panel that has two delivered files and presses the viewer button.

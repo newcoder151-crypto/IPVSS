@@ -84,20 +84,32 @@ const allowedOrigins = configuredOrigins.length
   ? configuredOrigins
   : ["http://localhost:8080", "http://127.0.0.1:8080"];
 
-app.use(
+// An Origin that matches the Host the request arrived on is, by definition,
+// same-origin (the Vite/nginx proxy case when the console is opened from
+// another PC at http://<nvr-ip>:8080). Always allow that; everything else must
+// be in the explicit allow-list above.
+function isSameOrigin(origin, req) {
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+app.use((req, res, next) => {
   cors({
     origin(origin, cb) {
-      // Allow same-origin / non-browser tools (no Origin header) and any
-      // explicitly allow-listed origin; reject everything else.
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      if (!origin || allowedOrigins.includes(origin) || isSameOrigin(origin, req)) {
+        return cb(null, true);
+      }
       return cb(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     maxAge: 600,
-  }),
-);
+  })(req, res, next);
+});
 
 app.use(morgan(isProduction ? "combined" : "dev"));
 app.use(express.json({ limit: "10mb" }));
