@@ -205,7 +205,10 @@ MEDIAMTX_API=http://localhost:9997
 MEDIAMTX_RTSP=localhost:8554
 ADDENV
 
-[[ ! -f "$ROOT/frontend/.env" ]] && echo "VITE_API_URL=http://localhost:${PORT:-3001}" > "$ROOT/frontend/.env"
+# VITE_API_URL is deliberately EMPTY: the browser then calls /api and /ws on the same host:port it loaded the page from,
+# and Vite proxies them to the API on this machine. A hardcoded http://localhost:3001 breaks every other PC on the network.
+if [[ ! -f "$ROOT/frontend/.env" ]]; then echo "VITE_API_URL=" > "$ROOT/frontend/.env"
+elif grep -qE '^VITE_API_URL=.*localhost' "$ROOT/frontend/.env"; then sed -i 's|^VITE_API_URL=.*|VITE_API_URL=|' "$ROOT/frontend/.env"; fi
 
 # VITE_MEDIAMTX_WEB / VITE_MEDIAMTX_HLS intentionally NOT written here —
 # same reasoning as MEDIAMTX_WEB/HLS above. src/pages/CameraGrid.tsx falls

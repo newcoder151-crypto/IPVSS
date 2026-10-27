@@ -28,7 +28,7 @@ function useWebSocket() {
   useEffect(() => {
     const token = tokenStore.get();
     if (!token) return;
-    const wsUrl = API_BASE.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(token)}`;
+    const wsUrl = (API_BASE || window.location.origin).replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(token)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     setWsStatus("connecting");
