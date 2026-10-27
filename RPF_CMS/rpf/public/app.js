@@ -25,7 +25,7 @@
   const S = {
     token: sessionStorage.getItem('rpf_token'),
     me: null, cfg: null, cameras: [],
-    view: 'alerts', alertState: 'active', incState: 'active', auditFilter: '',
+    view: 'alerts', alertState: 'unacked', incState: 'active', auditFilter: '',
     seen: null, pollTimer: null, drawer: null, f: {},   // f: filter + sort choices per list, kept while you move between tabs
   };
   const myPost = () => S.me && S.me.post_id;
@@ -157,7 +157,19 @@
       .ntoast.served,.ntoast.ok{border-color:#30a46c}.ntoast.err{border-color:#e5484d}
       .sound-btn{opacity:.85}
       .tab .pill.ok,.pill.ok{background:#30a46c;color:#fff}.tab .pill.warn,.pill.warn{background:#f5a524;color:#1b1b1b}.tab .pill.info,.pill.info{background:#5b8def;color:#fff}.tab .pill.red,.pill.red{background:#e5484d;color:#fff}
-      .badge.new{background:#30a46c;color:#fff}`));
+      .badge.new{background:#30a46c;color:#fff}
+      .subtabs{display:inline-flex;gap:4px;padding:4px;border-radius:12px;background:rgba(127,127,127,.14)}
+      .subtab{border:0;background:transparent;color:inherit;font:inherit;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;opacity:.75}
+      .subtab.on{background:#5b8def;color:#fff;opacity:1;box-shadow:0 1px 4px rgba(0,0,0,.25)}
+      .subtab .pill{display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;font-size:12px;line-height:19px;text-align:center;background:rgba(127,127,127,.35);color:inherit}
+      .subtab .pill.red{background:#e5484d;color:#fff}.subtab .pill.info{background:#5b8def;color:#fff}.subtab.on .pill{background:rgba(255,255,255,.28);color:#fff}.subtab .pill.zero{opacity:.55}`));
+  }
+  /** Two-way tab bar with counters: tabs = [[id, text, count, colour]] */
+  function subTabs(tabs, current, onPick) {
+    toastStyle();
+    return h('div', { class: 'subtabs', role: 'tablist' }, tabs.map(([id, text, n, cls]) =>
+      h('button', { class: `subtab ${current === id ? 'on' : ''}`, role: 'tab', 'aria-selected': String(current === id), onclick: () => onPick(id) },
+        text, h('span', { class: `pill ${cls || ''} ${Number(n) ? '' : 'zero'}` }, String(Number(n) || 0)))));
   }
   /** toast(message, kind, { title, onClick }) - kind: alert | incident | request | served | ok | err | info (old callers pass 'alert' / 'err' / nothing) */
   function toast(msg, cls, opts) {
@@ -537,11 +549,11 @@
       const tile = (icon, n, text, cls, onclick) => h('button', { class: `tile ${cls || ''}`, onclick }, h('span', { class: 'tile-ic' }, ic(icon, 20)), h('span', { class: 'tile-n' }, String(n ?? 0)), h('span', { class: 'tile-t' }, text));
       const tiles = h('div', { class: 'tiles' },
         tile('bell', sum.unacked, 'Need acknowledging', Number(sum.unacked) ? 'red' : 'ok', () => { S.alertState = 'unacked'; refresh(); }),
-        tile('alert', sum.active, 'Active alerts', '', () => { S.alertState = 'active'; refresh(); }),
+        tile('check', sum.acked, 'Acknowledged', '', () => { S.alertState = 'acked'; refresh(); }),
         tile('upload', sum.open_requests, 'Footage requests in progress', Number(sum.open_requests) ? 'blue' : '', () => go('requests')),
         tile('film', 'Open', 'Delivered footage', '', () => go('footage')));
-      const chips = h('div', { class: 'chips' }, [['active', 'Active'], ['unacked', 'Need acknowledging'], ['closed', 'Closed'], ['all', 'All']].map(([id, text]) =>
-        h('button', { class: `chip ${S.alertState === id ? 'active' : ''}`, onclick: () => { S.alertState = id; refresh(); } }, text)));
+      if (!['unacked', 'acked'].includes(S.alertState)) S.alertState = 'unacked';
+      const chips = subTabs([['unacked', 'Unacknowledged', sum.unacked, 'red'], ['acked', 'Acknowledged', sum.acked, '']], S.alertState, (id) => { S.alertState = id; refresh(); });
       const card = (a) => {
         const hi = a.priority >= 7; const open = !a.ack_at && ['routed', 'escalated'].includes(a.alert_status);
         const mine = a.post_id === myPost();
@@ -555,18 +567,19 @@
               h('div', { class: 'achips' }, a.ack_at ? badge(`acknowledged by ${a.ack_by_username || '-'}`, 'green') : badge('not acknowledged', open ? 'red' : 'grey'),
                 a.incident_status ? badge(`incident #${a.incident_id} ${label(a.incident_status)}`, INC_CLS[a.incident_status]) : h('span', { class: 'muted' }, 'no incident yet')))),
           mine ? h('div', { class: 'acard-act' },
-            !a.ack_at ? btnI('check', 'Acknowledge', { class: 'btn sm', onclick: async (e) => { e.stopPropagation(); try { await api(`/api/alerts/${a.delivery_id}/ack`, { method: 'POST', body: {} }); toast('Acknowledged'); refresh(); } catch (ex) { toast(ex.message); } } }) : null,
+            !a.ack_at ? btnI('check', 'Acknowledge', { class: 'btn sm', onclick: async (e) => { e.stopPropagation(); try { await api(`/api/alerts/${a.delivery_id}/ack`, { method: 'POST', body: {} }); toast('Moved to Acknowledged alerts', 'ok', { title: 'Acknowledged', onClick: () => { S.alertState = 'acked'; refresh(); } }); refresh(); } catch (ex) { toast(ex.message); } } }) : null,
             !a.incident_id ? btnI('plus', 'Raise incident', { class: 'btn sm primary', onclick: (e) => { e.stopPropagation(); incidentForm({ alert: a }); } }) : btnI('folder', `Incident #${a.incident_id}`, { class: 'btn sm', onclick: (e) => { e.stopPropagation(); openIncident(a.incident_id); } }),
             btnI('film', 'Request footage', { class: 'btn sm accent', onclick: (e) => { e.stopPropagation(); requestForm({ alert: a }); } })) : null);
       };
       return h('div', {}, head('Alerts', chips), tiles,
-        rows.length ? listWith('alerts', rows, { ...ALERT_CFG, view: (r) => h('div', { class: 'cards' }, r.map(card)) }) : h('div', { class: 'card empty' }, ic('bell', 28), h('div', {}, 'No alerts in this view.'), h('div', { class: 'muted' }, 'High-priority alerts arrive with an incident already open; lower-priority ones arrive when a CMS operator forwards them.')));
+        rows.length ? listWith('alerts', rows, { ...ALERT_CFG, view: (r) => h('div', { class: 'cards' }, r.map(card)) }) : h('div', { class: 'card empty' }, ic('bell', 28), h('div', {}, S.alertState === 'acked' ? 'No acknowledged alerts yet.' : 'Nothing waiting - every alert has been acknowledged.'), h('div', { class: 'muted' }, 'High-priority alerts arrive with an incident already open; lower-priority ones arrive when a CMS operator forwards them.')));
     },
 
     async incidents() {
       const rows = await api('/api/incidents' + qs({ status: S.incState, limit: 500 }));
-      const chips = h('div', { class: 'chips' }, [['active', 'Active'], ['closed', 'Closed'], ['all', 'All']].map(([id, text]) =>
-        h('button', { class: `chip ${S.incState === id ? 'active' : ''}`, onclick: () => { S.incState = id; refresh(); } }, text)));
+      if (!['active', 'closed'].includes(S.incState)) S.incState = 'active';
+      const sumI = await api('/api/alerts/summary');
+      const chips = subTabs([['active', 'Open incidents', sumI.open_incidents, 'info'], ['closed', 'Closed incidents', sumI.closed_incidents, '']], S.incState, (id) => { S.incState = id; refresh(); });
       const newBtn = btnI('plus', 'Raise incident', { class: 'btn primary', onclick: () => incidentForm() });
       const STEPS = [['open', 'Open'], ['under_review', 'Under review'], ['closed', 'Closed']];
       const pipeline = (st) => h('div', { class: 'pipe' }, STEPS.map(([id, text], i) => { const cur = STEPS.findIndex(([x]) => x === st); return h('div', { class: `pstep ${i < cur ? 'done' : i === cur ? 'now' : ''}` }, h('i', {}, i < cur ? ic('check', 11) : ''), h('span', {}, text)); }));
@@ -578,7 +591,7 @@
           i.status !== 'closed' && i.post_id === myPost() ? btnI('film', 'Request footage', { class: 'btn sm accent', onclick: (e) => { e.stopPropagation(); requestForm({ incident: i }); } }) : null));
       return h('div', {}, head('Incidents', chips, newBtn),
         rows.length ? listWith('incidents', rows, { ...INC_CFG, view: (r) => h('div', { class: 'cards two' }, r.map(card)) })
-          : h('div', { class: 'card empty' }, ic('folder', 28), h('div', {}, 'No incidents in this view.'), h('div', { class: 'muted' }, 'High-priority alerts raise one automatically. For anything reported to you directly, press "Raise incident".')));
+          : h('div', { class: 'card empty' }, ic('folder', 28), h('div', {}, S.incState === 'closed' ? 'No closed incidents yet.' : 'No open incidents.'), h('div', { class: 'muted' }, 'High-priority alerts raise one automatically. For anything reported to you directly, press "Raise incident".')));
     },
 
     async requests() {
@@ -812,7 +825,7 @@
 
     const actions = [];
     if (officerActs) {
-      if (!a.ack_at) actions.push(actBtn('Acknowledge', () => api(`/api/alerts/${deliveryId}/ack`, { method: 'POST', body: {} }), 'primary'));
+      if (!a.ack_at) actions.push(actBtn('Acknowledge', async () => { await api(`/api/alerts/${deliveryId}/ack`, { method: 'POST', body: {} }); toast('Moved to Acknowledged alerts', 'ok', { title: 'Acknowledged', onClick: () => { S.alertState = 'acked'; go('alerts'); } }); }, 'primary'));
       if (!a.incident_id) actions.push(h('button', { class: 'btn primary', onclick: () => incidentForm({ alert: a }) }, 'Raise incident'));
       if (a.incident_id) actions.push(h('button', { class: 'btn primary', onclick: () => openIncident(a.incident_id) }, `Open incident #${a.incident_id}`));
       actions.push(h('button', { class: 'btn', onclick: () => requestForm({ alert: a }) }, 'Request footage'));
@@ -857,7 +870,7 @@
       actions.push(h('button', { class: 'btn', onclick: () => formDialog({
         title: 'Close incident', sub: 'Closing resolves the alert. This cannot be reopened from the dashboard (CMS can reopen it).',
         fields: [{ name: 'note', label: 'Action taken / outcome (required)', type: 'textarea' }], submitLabel: 'Close incident',
-        submit: async (v) => { if (!v.note.trim()) throw new Error('write the action taken / outcome before closing'); await api(`/api/incidents/${id}/status`, { method: 'PATCH', body: { status: 'closed', note: v.note } }); await reopen(); refresh(); },
+        submit: async (v) => { if (!v.note.trim()) throw new Error('write the action taken / outcome before closing'); await api(`/api/incidents/${id}/status`, { method: 'PATCH', body: { status: 'closed', note: v.note } }); toast(`Incident #${id} moved to Closed incidents`, 'ok', { title: 'Incident closed', onClick: () => { S.incState = 'closed'; go('incidents'); } }); await reopen(); refresh(); },
       }) }, 'Close incident'));
     }
     const drawer = h('aside', { class: 'drawer' },

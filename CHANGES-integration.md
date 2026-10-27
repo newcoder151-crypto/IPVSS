@@ -93,3 +93,12 @@ Checked in the code and with the test-suite against a real database (12/12 pass;
 3. `bash start.sh` starts everything (PostgreSQL role/databases, CMS, RPF, M-NVR + analytics, bridge). Tried end to end here: CMS,
    RPF, M-NVR API, web page (login through the proxy), bridge all answered. The M-NVR web page now falls back to IPv4 when the
    machine has IPv6 switched off (it used to fail with EAFNOSUPPORT and the page never came up).
+
+---
+# RPF tabs: Unacknowledged / Acknowledged alerts, Open / Closed incidents
+
+- Alerts has two tabs with counters: Unacknowledged (opens here) and Acknowledged. Every alert is in exactly one of them; acknowledging
+  moves it across at once (pop-up "Moved to Acknowledged alerts", click to jump there). Alerts CMS dismissed/resolved count as handled.
+- Incidents has two tabs with counters: Open incidents (open + under review) and Closed incidents. Closing an incident moves it to Closed
+  incidents (pop-up with a link). New API counters: alerts/summary -> acked, open_incidents, closed_incidents.
+- Tested through the API and by clicking the real buttons in the page (test/ui_notices.test.js): 20/20 tests pass.

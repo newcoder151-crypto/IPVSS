@@ -50,7 +50,7 @@ test('pop-up notices and tab counters, page + server + database', { skip: !enabl
   const pill = (id) => { const e = doc.getElementById(id); return e && !e.classList.contains('hidden') ? e.textContent : ''; };
   const toasts = () => [...doc.querySelectorAll('.ntoast')].map((e) => e.textContent);
   const settle = async () => { await tick(); await wait(500); };
-  await wait(600);
+  await wait(800); await tick(); await wait(400);   // the page has loaded and remembered its starting state
 
   await t.test('nothing pops up for what already existed; counters start empty', async () => {
     assert.deepEqual(toasts(), []);
@@ -101,6 +101,34 @@ test('pop-up notices and tab counters, page + server + database', { skip: !enabl
     await settle();
     assert.equal((await call('GET', '/api/footage', token)).body[0].is_new, false);
     assert.equal(pill('footage-pill'), '');
+  });
+
+  await t.test('alerts and incidents: Unacknowledged/Acknowledged and Open/Closed tabs, driven through the page', async () => {
+    const t1 = new Date(Date.now() - 120000);
+    const [al] = await q(`INSERT INTO alert (nvr_id, nvr_event_id, camera_id, zone_id, alert_type, priority, event_time, location, status, routing_mode, assigned_post_id) VALUES ($1, $2, $3, $4, 'intrusion', 8, $5, ST_SetSRID(ST_MakePoint(80.1, 26), 4326)::geography, 'routed', 'auto', $6) RETURNING id`, [nvr.id, `ui-${sfx}`, cam.id, zone.id, t1, post.id]);
+    const [dl] = await q(`INSERT INTO alert_delivery (alert_id, alert_event_time, post_id) VALUES ($1, $2, $3) RETURNING id`, [al.id, t1, post.id]);
+    const [inc] = await q(`INSERT INTO incident (alert_delivery_id, post_id, alert_type, location, occurred_at, raised_by, title) VALUES ($1, $2, 'intrusion', ST_SetSRID(ST_MakePoint(80.1, 26), 4326)::geography, $3, $4, 'tab test') RETURNING id`, [dl.id, post.id, t1, op.id]);
+    const tab = (label) => [...doc.querySelectorAll('.subtab')].find((b) => b.textContent.startsWith(label));
+    const count = (label) => tab(label).querySelector('.pill').textContent;
+    const cards = () => doc.querySelectorAll('.acard').length;
+    doc.querySelector('[data-tab="alerts"]').click(); await wait(700);
+    assert.equal(tab('Unacknowledged').classList.contains('on'), true, 'opens on the Unacknowledged tab');
+    assert.equal(count('Unacknowledged'), '1'); assert.equal(count('Acknowledged'), '0'); assert.equal(cards(), 1);
+    [...doc.querySelectorAll('.acard-act button')].find((b) => /Acknowledge/.test(b.textContent)).click(); await wait(900);
+    assert.equal(count('Unacknowledged'), '0', 'acknowledged alert left the Unacknowledged tab');
+    assert.equal(count('Acknowledged'), '1');
+    assert.equal(cards(), 0, 'nothing left waiting');
+    tab('Acknowledged').click(); await wait(700);
+    assert.equal(cards(), 1, 'it is now listed under Acknowledged');
+    doc.querySelector('[data-tab="incidents"]').click(); await wait(700);
+    assert.equal(count('Open incidents'), '1'); assert.equal(count('Closed incidents'), '0');
+    assert.equal(doc.querySelectorAll('.icard').length, 1);
+    assert.equal((await call('PATCH', `/api/incidents/${inc.id}/status`, token, { status: 'closed', note: 'done' })).status, 200);
+    await settle(); doc.querySelector('[data-tab="incidents"]').click(); await wait(700);
+    assert.equal(count('Open incidents'), '0'); assert.equal(count('Closed incidents'), '1');
+    assert.equal(doc.querySelectorAll('.icard').length, 0, 'closed incident left the Open tab');
+    tab('Closed incidents').click(); await wait(700);
+    assert.equal(doc.querySelectorAll('.icard').length, 1, 'it is listed under Closed incidents');
   });
 
   await t.test('another post\'s notices never reach this post', async () => {

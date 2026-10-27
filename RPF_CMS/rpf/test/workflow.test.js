@@ -209,7 +209,17 @@ test('RPF post dashboard against the shared CMS database', { skip: !enabled && '
 
   await t.test('acknowledge: once, only by the owning post, writes history', async () => {
     assert.equal((await call('POST', `/api/alerts/${deliveryB.id}/ack`, A, {})).status, 404, 'cannot acknowledge another post\'s alert');
+    const inTab = async (state, id) => (await call('GET', `/api/alerts?state=${state}`, A)).body.some((x) => x.delivery_id === id);
+    assert.equal(await inTab('unacked', delivery.id), true, 'waiting in the Unacknowledged tab');
+    assert.equal(await inTab('acked', delivery.id), false);
+    const before = (await call('GET', '/api/alerts/summary', A)).body;
     assert.equal((await call('POST', `/api/alerts/${delivery.id}/ack`, A, {})).status, 200);
+    assert.equal(await inTab('unacked', delivery.id), false, 'acknowledged: gone from Unacknowledged');
+    assert.equal(await inTab('acked', delivery.id), true, '...and now in Acknowledged');
+    const after = (await call('GET', '/api/alerts/summary', A)).body;
+    assert.equal(Number(after.unacked), Number(before.unacked) - 1);
+    assert.equal(Number(after.acked), Number(before.acked) + 1);
+    assert.equal(await inTab('acked', deliveryB.id), false, 'post B\'s alerts are in neither tab of post A');
     assert.equal((await call('POST', `/api/alerts/${delivery.id}/ack`, A, {})).status, 400);
     const d = await call('GET', `/api/alerts/${delivery.id}`, A);
     assert.equal(d.body.alert.alert_status, 'acknowledged');
@@ -296,7 +306,15 @@ test('RPF post dashboard against the shared CMS database', { skip: !enabled && '
     assert.equal((await call('PATCH', `/api/incidents/${incidentB.id}/status`, A, { status: 'closed' })).status, 404);
     assert.equal((await call('PATCH', `/api/incidents/${incident.id}/status`, A, { status: 'open' })).status, 400);
     assert.equal((await call('PATCH', `/api/incidents/${incident.id}/status`, A, { status: 'under_review' })).status, 200);
+    const listIds = async (st) => (await call('GET', `/api/incidents?status=${st}`, A)).body.map((x) => x.id);
+    assert.ok((await listIds('active')).includes(incident.id), 'open incident is in the Open tab');
+    const sumBefore = (await call('GET', '/api/alerts/summary', A)).body;
     assert.equal((await call('PATCH', `/api/incidents/${incident.id}/status`, A, { status: 'closed', note: 'handed to GRP' })).status, 200);
+    assert.ok(!(await listIds('active')).includes(incident.id), 'closed: gone from the Open tab');
+    assert.ok((await listIds('closed')).includes(incident.id), '...and listed under Closed incidents');
+    const sumAfter = (await call('GET', '/api/alerts/summary', A)).body;
+    assert.equal(Number(sumAfter.open_incidents), Number(sumBefore.open_incidents) - 1);
+    assert.equal(Number(sumAfter.closed_incidents), Number(sumBefore.closed_incidents) + 1);
     assert.equal((await call('PATCH', `/api/incidents/${incident.id}/status`, A, { status: 'under_review' })).status, 409);
     const d = await call('GET', `/api/alerts/${delivery.id}`, A);
     assert.equal(d.body.alert.alert_status, 'resolved');

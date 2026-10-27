@@ -15,10 +15,12 @@ const STATE_FILTERS = {
   // an alert is "closed" once its incident is closed, or it was resolved at the post / dismissed by CMS
   active: "((i.status IS NULL OR i.status <> 'closed') AND a.status NOT IN ('resolved','dismissed'))",
   closed: "(i.status = 'closed' OR a.status IN ('resolved','dismissed'))",
+  // the two inbox tabs: every alert is in exactly one of them
+  acked: "NOT (d.ack_at IS NULL AND a.status IN ('routed','escalated'))",
   all: 'TRUE',
 };
 
-/** GET /api/alerts?state=active|unacked|closed|all&limit= - the alert inbox. */
+/** GET /api/alerts?state=unacked|acked|active|closed|all&limit= - the alert inbox (the dashboard uses the tabs unacked / acked). */
 router.get('/', wrap(async (req, res) => {
   const state = req.query.state || 'active';
   if (!STATE_FILTERS[state]) throw badRequest(`state must be one of ${Object.keys(STATE_FILTERS).join(', ')}`);
@@ -40,10 +42,11 @@ router.get('/summary', wrap(async (req, res) => {
   const params = [];
   const scope = postScopeSql(req.user, 'p', params);
   const nParams = []; const nScope = notificationScope(req.user, nParams);
-  const [alerts, reqs, footage, notes, unseen] = await Promise.all([
+  const [alerts, reqs, footage, notes, unseen, incs] = await Promise.all([
     pool.query(
       `SELECT COUNT(DISTINCT d.alert_id) FILTER (WHERE d.ack_at IS NULL AND a.status IN ('routed','escalated')) AS unacked,
               COUNT(DISTINCT d.alert_id) FILTER (WHERE (i.status IS NULL OR i.status <> 'closed') AND a.status NOT IN ('resolved','dismissed')) AS active,
+              COUNT(DISTINCT d.alert_id) FILTER (WHERE NOT (d.ack_at IS NULL AND a.status IN ('routed','escalated'))) AS acked,
               COALESCE(MAX(d.id), 0) AS last_delivery_id
          FROM alert_delivery d
          JOIN alert a ON a.id = d.alert_id AND a.event_time = d.alert_event_time
@@ -70,8 +73,11 @@ router.get('/summary', wrap(async (req, res) => {
         WHERE ${scope} AND f.delivered_at > now() - interval '30 days'
           AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.entity = 'delivered_footage' AND a.entity_id = f.id
                            AND a.action IN ('footage.view', 'footage.download', 'footage.download.section'))`, params),
+    pool.query(
+      `SELECT COUNT(*) FILTER (WHERE i.status <> 'closed') AS open_incidents, COUNT(*) FILTER (WHERE i.status = 'closed') AS closed_incidents
+         FROM incident i JOIN rpf_post p ON p.id = i.post_id WHERE ${scope}`, params),
   ]);
-  res.json({ ...alerts.rows[0], ...reqs.rows[0], ...footage.rows[0], ...notes.rows[0], ...unseen.rows[0] });
+  res.json({ ...alerts.rows[0], ...reqs.rows[0], ...footage.rows[0], ...notes.rows[0], ...unseen.rows[0], ...incs.rows[0] });
 }));
 
 /** GET /api/alerts/:deliveryId - one alert with its incident, requests, footage and status history. */

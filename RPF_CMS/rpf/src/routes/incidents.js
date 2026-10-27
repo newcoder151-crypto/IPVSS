@@ -29,7 +29,7 @@ const INCIDENT_SELECT = `
     LEFT JOIN nvr_unit n ON n.id = i.nvr_id
     LEFT JOIN camera c ON c.id = i.camera_id`;
 
-/** GET /api/incidents?status=active|open|under_review|closed|all&source= */
+/** GET /api/incidents?status=active|open|under_review|closed|all&source=   (the dashboard tabs: active = open + under review, closed) */
 router.get('/', wrap(async (req, res) => {
   const params = [];
   const where = [postScopeSql(req.user, 'p', params)];
